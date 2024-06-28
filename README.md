@@ -21,4 +21,6 @@ renv::restore()
 [metadata](https://raw.githubusercontent.com/lamamedhat/Network-Analysis-of-Breast-Cancer-using-WGCNA/main/Data/metadata.csv)
 
 # Sample Output
-[Network_analysis_PDF](
+[Network_analysis_PDF](https://github.com/lamamedhat/Network-Analysis-of-Breast-Cancer-using-WGCNA/blob/main/outputs/WGCNA-RNA-seq.pdf)
+
+[WGCNA_Figures_PDF](
