@@ -6,7 +6,7 @@ The analysis outputs include:
 - Module Eigengenes: Summary profiles representing the expression patterns of each module.
 - Topological Overlap Matrix (TOM): Measures gene connectivity, enhancing network robustness.
 - Visualization:
-      - Boxplots: Display the distribution of gene expression levels within modules across different conditions.
-      - Heatmaps: Illustrate the expression patterns of genes within modules, providing insights into module structure and relationships.
+ - Boxplots: Display the distribution of gene expression levels within modules across different conditions.
+ - Heatmaps: Illustrate the expression patterns of genes within modules, providing insights into module structure and relationships.
 
   
