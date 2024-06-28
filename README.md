@@ -9,4 +9,14 @@ The analysis outputs include:
   - Boxplots: Display the distribution of gene expression levels within modules across different conditions.
   - Heatmaps: Illustrate the expression patterns of genes within modules, providing insights into module structure and relationships.
 
-  
+# Run
+You can install dependencies recorded in the lockfile using the following command:
+```bash
+renv::restore()
+```
+
+# Sample Input
+
+
+# Sample Output
+
