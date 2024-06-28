@@ -1,0 +1,440 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+# **Weighted gene co-expression network analysis(WGCNA) **
+
+
+# Loading required libraries.
+```{r message=FALSE}
+library(DESeq2)
+library(WGCNA)
+library(magrittr)
+library(ggplot2)
+library(genefilter)
+```
+
+# Read counts data into CSV file.
+```{r}
+read_count_data <- function(file_path){
+  counts_data <- read.csv(file_path, row.names = 1)
+  expression_data <- round(counts_data)
+  return(expression_data)
+}
+expression_matrix <- read_count_data("../Network analysis/Data/GSE183947_fpkm.csv")
+head(expression_matrix,2)
+```
+
+# Read metadata into CSV file.
+```{r}
+read_metadata <- function(file_path){
+  coldata <- read.csv(file_path, row.names = 1)
+  return (coldata)
+}
+meta_data <- read_metadata("../Network analysis/Data/metadata.csv")
+head(meta_data)
+```
+
+## Convert condition column in metadata to factor.
+```{r}
+meta_data$condition <- as.factor(meta_data$condition)
+meta_data$description <- as.factor(meta_data$description)
+```
+
+## Make sure the row names in metadata matches to the column names in expression matrix.
+```{r}
+all(rownames(meta_data) %in% colnames(expression_matrix))
+```
+
+## Match the row names in metadata to the column names in expression matrix.
+```{r}
+rownames(meta_data) = colnames(expression_matrix)
+```
+
+## Create a new column named accession_code and store the colnames of expression matrix in it 
+
+```{r}
+meta_data$accession_code <- colnames(expression_matrix)
+```
+
+
+# pre-filtering to keep only genes with 50 or more reads in total across the samples.
+
+```{r}
+pre_filter <- function(){
+  # Only keep rows that have total counts above the cutoff
+  keep <- expression_matrix %>% rowSums(.) >= 50
+  filtered_counts <- expression_matrix[keep,]
+  return (filtered_counts)
+}
+filtered_expression_counts <- pre_filter()
+head(filtered_expression_counts,2)
+```
+
+# Construct a DESeqDataSet.
+```{r}
+deseqdataset <- function(){
+  deseqdataset <- DESeqDataSetFromMatrix(countData = filtered_expression_counts, 
+                                         colData = meta_data, 
+                                         design = ~ condition)
+  
+  return(deseqdataset)
+}
+deseqdataset_object <- deseqdataset()
+deseqdataset_object
+```
+
+# Differential expression analysis
+```{r}
+diff_expr_analysis <- function(){
+  deseq_analysis <- DESeq(deseqdataset_object)
+  # Apply Variance Stabilizing Transformation (VST)
+  vsd <- vst(deseq_analysis, blind = FALSE)
+  return (vsd)
+}
+dds_norm <- diff_expr_analysis()
+dds_norm
+```
+
+# Extract the VST-transformed data, Filter low variance genes then transpose to have genes as columns
+```{r}
+norm_counts <- function(){
+  norm_transposed_vst <- assay(dds_norm) %>% 
+              varFilter(var.cutoff = 0.5) %>% 
+              t() 
+  return(norm_transposed_vst)
+}
+normalized_counts <- norm_counts()
+```
+
+# Determine power soft-threshold
+```{r}
+pick_s_th <- function(){
+# the pickSoftThreshold() function help identify good choices for power parameter
+  sft <- pickSoftThreshold(normalized_counts,
+    dataIsExpr = TRUE,
+    corFnc = cor,
+    networkType = "signed")
+  return(sft)
+  
+}
+pick_soft_th <- pick_s_th()
+```
+## Calculate a measure of the model fit, the signed R^2
+```{r}
+calculate_model_fit <- function(){
+  sft_df <- data.frame(pick_soft_th$fitIndices) %>%
+    dplyr::mutate(model_fit = -sign(slope) * SFT.R.sq)
+  return(sft_df)
+}
+model_fit_df <- calculate_model_fit()
+model_fit_df
+```
+## Plot the model fitting by the power soft threshold so we can decide on a soft-threshold for power.
+```{r}
+plot_model_fit <- function(){
+jpeg("../Network analysis/outputs/model_fit.jpeg")
+p <- ggplot(model_fit_df, aes(x = Power, y = model_fit, label = Power)) +
+     geom_point() +
+     # We'll put the Power labels slightly above the data points
+     geom_text(nudge_y = 0.1) +
+     # We will plot what WGCNA recommends as an R^2 cutoff
+     geom_hline(yintercept = 0.80, col = "red") +
+    # Just in case our values are low, we want to make sure we can still see the 0.80 level
+     ylim(c(min(model_fit_df$model_fit), 1.05)) +
+     xlab("Soft Threshold (power)") +
+     ylab("Scale Free Topology Model Fit, signed R^2") +
+     ggtitle("Scale independence") +
+     theme_classic()
+print(p)
+dev.off()
+}
+
+plot_model_fit()
+
+
+```
+
+# Run WGCNA to find gene co-expression modules using 16 for the power argument
+```{r}
+run_WGCNA <- function(){
+bwnet <- blockwiseModules(
+  normalized_counts,
+  # What size chunks (how many genes) the calculations should be run in
+  maxBlockSize = 2000, 
+  # topological overlap matrix
+  TOMType = "signed", 
+  # soft threshold for network construction
+  power = 16, 
+  # Let's use numbers instead of colors for module labels
+  numericLabels = TRUE, 
+  randomSeed = 1234
+  )
+return(bwnet)
+}
+bwnet <- run_WGCNA()
+```
+
+# Write main WGCNA results to CSV file
+```{r}
+write_WGCNA <- function(out_path){
+  write.csv(bwnet$MEs, out_path)
+}
+write_WGCNA("../Network analysis/outputs/main_WGCNA_results.csv")
+```
+
+# Explore WGCNA results
+```{r}
+# Explore eigengene modules for each sample
+mod_eigengenes<- function(){
+  module_eigengenes <- bwnet$MEs
+  return(module_eigengenes)
+}
+module_eigengenes <- mod_eigengenes()
+head(module_eigengenes,2)
+```
+
+# Which modules have biggest differences across two condition groups?
+## Run linear model on each module
+```{r}
+fit_linear_model <- function(){
+  # Create the design matrix from the `condition` variable
+  des_mat <- model.matrix(~ meta_data$condition)
+  # lmFit() needs a transposed version of the matrix
+  fit <- limma::lmFit(t(module_eigengenes), design = des_mat)
+  # Apply empirical Bayes to smooth standard errors
+  fit <- limma::eBayes(fit)
+  return(fit)
+}
+
+fit <- fit_linear_model()
+```
+
+## Apply multiple testing correction and obtain stats in a dataframe
+```{r}
+dataframe_stats <- function(){
+stats_df <- limma::topTable(fit, number = ncol(module_eigengenes)) %>%
+  tibble::rownames_to_column("module")
+return(stats_df)
+}
+stats_df <- dataframe_stats()
+stats_df
+```
+
+# Module 5 seems to be the most differentially expressed across condition groups
+# Let’s make plot of module 5
+```{r}
+
+modules_dataframe <- function(){
+  module_5 <- module_eigengenes %>%
+  tibble::rownames_to_column("accession_code") %>%
+  dplyr::inner_join(
+    meta_data %>%
+      dplyr::select(accession_code, condition),
+    by = "accession_code"
+  )
+  return(module_5)
+}
+modules_df <- modules_dataframe()
+head(modules_df,2)
+
+```
+# Boxplot of module 5
+```{r}
+boxplot_mod_5 <- function(){
+jpeg("../Network analysis/outputs/boxplot_of_module_5.jpeg")
+p <- ggplot(modules_df,aes(x = condition,
+                            y = ME5,
+                            color = condition)) +
+    # a boxplot with outlier points hidden (they will be in the sina plot)
+    geom_boxplot(width = 0.2, outlier.shape = NA) +
+    # A sina plot to show all of the individual data points
+    ggforce::geom_sina(maxwidth = 0.3) +
+    theme_classic()
+
+print(p)
+dev.off()  
+}
+boxplot_mod_5()
+```
+
+# Boxplot of module 6
+```{r}
+boxplot_mod_6 <- function(){
+jpeg("../Network analysis/outputs/boxplot_of_module_6.jpeg")
+p <- ggplot(modules_df,aes(x = condition,
+                            y = ME6,
+                            color = condition)) +
+    # a boxplot with outlier points hidden (they will be in the sina plot)
+    geom_boxplot(width = 0.2, outlier.shape = NA) +
+    # A sina plot to show all of the individual data points
+    ggforce::geom_sina(maxwidth = 0.3) +
+    theme_classic()
+print(p)
+dev.off()  
+}
+boxplot_mod_6()
+
+```
+
+
+# What genes are a part of module 5
+
+## Genes corresponding to each module
+```{r}
+gene_module <- function(module_name){
+ gene_module<- tibble::enframe(bwnet$colors, name = "gene",
+                                   value = "module") %>%
+# Let's add the `ME` part so its more clear what these numbers are and it matches elsewhere
+dplyr::mutate(module = paste0(module_name, module))
+ return(gene_module)
+}
+gene_module_key <- gene_module("ME")
+```
+
+## Genes that part of module 5
+```{r}
+gene_module_key %>% dplyr::filter(module == "ME5")
+```
+
+# Extract ME5 eigengene module values 
+```{r}
+mod_eigengene <- function(module_name){
+module_eigengene <- module_eigengenes %>%
+    dplyr::select(all_of(module_name)) %>%
+    tibble::rownames_to_column("accession_code")
+
+return(module_eigengene)
+}
+module_eigengene <- mod_eigengene("ME5")
+head(module_eigengene,10)
+```
+# Create dataframe that contain condition and ME5 columns 
+```{r}
+col_annotation_df <- function(){
+  # Set up column annotation from metadata
+  col_annot_df <- meta_data %>%
+  # Only select the condition and sample ID columns
+  dplyr::select(accession_code, condition) %>%
+  # Add on the eigengene expression by joining with sample IDs
+  dplyr::inner_join(module_eigengene, by = "accession_code") %>%
+  # Arrange by condition
+  dplyr::arrange(condition) %>%
+  # Store sample
+  tibble::column_to_rownames("accession_code")
+ 
+  return(col_annot_df) 
+}
+
+col_annot_df <- col_annotation_df()
+head(col_annot_df,10)
+```
+# Create the ComplexHeatmap column annotation function
+```{r}
+ComplexHeatmap_col_annotation <- function(module_name){
+  # Create the ComplexHeatmap column annotation object
+  col_annot <- ComplexHeatmap::HeatmapAnnotation(
+  # Supply condition labels
+  condition = col_annot_df$condition,
+  # Add annotation barplot
+  module_eigengene = ComplexHeatmap::anno_barplot(dplyr::select(col_annot_df, module_name)),
+  # Pick colors for each experimental group in condition
+  col = list(condition = c("tumor" = "#f1a340", "normal" = "#998ec3"))
+  )
+  
+  return(col_annot)
+}
+
+col_annot <- ComplexHeatmap_col_annotation("ME5")
+```
+
+# Get a vector of the gene IDs that correspond to this module
+```{r}
+get_module_genes <- function(module_name){
+  module_genes <- gene_module_key %>%
+      dplyr::filter(module == module_name) %>%
+      dplyr::pull(gene)
+  return(module_genes)
+}
+
+module_genes <- get_module_genes("ME5")
+```
+
+# Set up the gene expression data frame
+```{r}
+module_matrix <- function(){
+mod_mat <- normalized_counts %>%
+    t() %>%
+    as.data.frame() %>%
+    # Only keep genes from ths module
+    dplyr::filter(rownames(.) %in% module_genes) %>%
+    # Order the samples to match col_annot_df
+    dplyr::select(rownames(col_annot_df)) %>%
+    # Data needs to be a matrix
+    as.matrix()
+return(mod_mat)
+}
+
+module_mat <- module_matrix()
+```
+
+# Normalize the gene expression values
+```{r}
+norm_module_matrix <- function(){
+  mod_mat <- module_mat %>%
+    # Scale can work on matrices, but it does it by column so we will need to
+    # transpose first
+    t() %>%
+    scale() %>%
+    # And now we need to transpose back
+    t()
+return(mod_mat)  
+}
+
+mod_mat <- norm_module_matrix()
+```
+
+# Create a color function based on standardized scale
+```{r}
+color <- function(){
+  color_func <- circlize::colorRamp2(c(-4, 0, 4), 
+                                     c("#67a9cf", "#f7f7f7", "#ef8a62"))
+  return(color_func)
+}
+
+color_func <- color()
+```
+
+# Plot the Heatmap
+```{r}
+plot_heatmap <- function(module_name){
+  set.seed(432)
+  jpeg("../Network analysis/outputs/Heatmap_of_largest_DE_Module.jpeg")
+  heatmap <- ComplexHeatmap::Heatmap(mod_mat,
+    name = module_name,
+    # Supply color function
+    col = color_func,
+    # Supply column annotation
+    bottom_annotation = col_annot,
+    # We don't want to cluster samples
+    cluster_columns = FALSE,
+    # We don't need to show sample or gene labels
+    show_row_names = FALSE,
+    show_column_names = FALSE
+  )
+  print(heatmap)
+  dev.off()
+}  
+plot_heatmap("ME5")
+```
+
+
+
+
+
+
+
+
+
+
