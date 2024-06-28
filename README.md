@@ -18,7 +18,7 @@ renv::restore()
 # Sample Input
 [Expression_matrix](https://raw.githubusercontent.com/lamamedhat/Network-Analysis-of-Breast-Cancer-using-WGCNA/main/Data/GSE183947_fpkm.csv)
 
-[metadata]()
+[metadata](https://raw.githubusercontent.com/lamamedhat/Network-Analysis-of-Breast-Cancer-using-WGCNA/main/Data/metadata.csv)
 
 # Sample Output
-
+[Network_analysis_PDF](
